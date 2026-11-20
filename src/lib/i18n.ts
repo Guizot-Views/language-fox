@@ -153,7 +153,7 @@ export const en: TranslationSchema = {
     privacyDesc: 'Your vocabulary collection, review history, and learning progress are strictly isolated to your authenticated session.',
   },
   modals: {
-    signOutTitle: 'Sign out from Lingo Fox?',
+    signOutTitle: 'Sign out from Language Fox?',
     signOutDesc: 'Are you sure you want to end your current learning session? Your saved vocabulary and review progress remain safely synced.',
     confirmSignOut: 'Sign Out',
     cancel: 'Cancel',
@@ -266,7 +266,7 @@ export const id: TranslationSchema = {
     privacyDesc: 'Koleksi kosakata, riwayat review, dan perkembangan belajar Anda tersimpan secara aman dan terisolasi khusus untuk akun Anda.',
   },
   modals: {
-    signOutTitle: 'Keluar dari Lingo Fox?',
+    signOutTitle: 'Keluar dari Language Fox?',
     signOutDesc: 'Apakah Anda yakin ingin mengakhiri sesi belajar saat ini? Data kosakata dan progres review Anda tetap tersimpan dengan aman.',
     confirmSignOut: 'Keluar',
     cancel: 'Batal',

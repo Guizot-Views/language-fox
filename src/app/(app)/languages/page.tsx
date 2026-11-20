@@ -13,7 +13,10 @@ export default async function LanguagesPage() {
   ]);
 
   const cookieStore = await cookies();
-  const activeLangCookie = cookieStore.get("lingo_fox_active_lang") || cookieStore.get("grwly_active_lang");
+  const activeLangCookie =
+    cookieStore.get("language_fox_active_lang") ||
+    cookieStore.get("lingo_fox_active_lang") ||
+    cookieStore.get("grwly_active_lang");
 
   let activeLanguageId = activeLangCookie?.value
     ? parseInt(activeLangCookie.value, 10)

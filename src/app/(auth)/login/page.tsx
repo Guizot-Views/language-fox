@@ -1,8 +1,8 @@
 import { AuthView } from "@/components/AuthView";
 
 export const metadata = {
-  title: "Masuk — Lingo Fox",
-  description: "Masuk ke akun Lingo Fox Anda",
+  title: "Masuk — Language Fox",
+  description: "Masuk ke akun Language Fox Anda",
 };
 
 export default function LoginPage() {

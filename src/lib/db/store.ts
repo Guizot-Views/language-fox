@@ -31,9 +31,9 @@ export interface DatabaseState {
 let cachedStore: DatabaseState | null = null;
 const isTestEnv = process.env.NODE_ENV === "test" || Boolean(process.env.NODE_TEST_CONTEXT);
 const DATA_FILE = isTestEnv
-  ? path.join(process.cwd(), ".lingo-fox-test-data.json")
-  : path.join(process.cwd(), ".lingo-fox-data.json");
-const LEGACY_DATA_FILE = path.join(process.cwd(), ".grwly-data.json");
+  ? path.join(process.cwd(), ".language-fox-test-data.json")
+  : path.join(process.cwd(), ".language-fox-data.json");
+const LEGACY_DATA_FILE = path.join(process.cwd(), ".lingo-fox-data.json");
 
 function createInitialState(): Omit<DatabaseState, "save"> {
   const initialLanguages: Language[] = SUPPORTED_LANGUAGES.map((l, index) => ({
@@ -49,7 +49,7 @@ function createInitialState(): Omit<DatabaseState, "save"> {
   const indonesianId = initialLanguages.find((l) => l.code === "id")!.id;
   const englishId = initialLanguages.find((l) => l.code === "en")!.id;
 
-  const demoUserId = "user_lingo_fox_demo";
+  const demoUserId = "user_language_fox_demo";
 
   const initialUserLanguages: StoredUserLanguage[] = [
     {

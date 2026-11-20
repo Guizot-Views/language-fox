@@ -42,7 +42,7 @@ export function Header({
           <div className="w-8 h-8 flex items-center justify-center">
             <Image
               src="/logo.png"
-              alt="Lingo Fox Logo"
+              alt="Language Fox Logo"
               width={36}
               height={36}
               className="w-full h-full object-contain"
@@ -50,7 +50,7 @@ export function Header({
             />
           </div>
           <span className="font-bold text-base text-zinc-900 dark:text-zinc-100 tracking-tight">
-            Lingo Fox
+            Language Fox
           </span>
         </Link>
       </div>

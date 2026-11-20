@@ -63,6 +63,8 @@ export async function getSession(): Promise<{ user: UserSession | null }> {
   // Offline local dev fallback when Supabase is not configured
   const cookieStore = await cookies();
   const devSessionCookie =
+    cookieStore.get("language_fox_dev_session") ||
+    cookieStore.get("language_fox_session") ||
     cookieStore.get("lingo_fox_dev_session") ||
     cookieStore.get("lingo_fox_session");
 

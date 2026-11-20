@@ -27,12 +27,14 @@ export function KanbanBoard({ initialWords, counts, activeLanguageId, languageNa
   // Remember status tab sorting preference across sessions
   React.useEffect(() => {
     try {
-      const saved = localStorage.getItem("lingofox_vocab_status_sort");
+      const saved =
+        localStorage.getItem("language_fox_vocab_status_sort") ||
+        localStorage.getItem("lingofox_vocab_status_sort");
       if (saved && saved !== "custom") {
         setStatusSortBy(saved);
       } else if (saved === "custom") {
         setStatusSortBy("recently_added");
-        localStorage.setItem("lingofox_vocab_status_sort", "recently_added");
+        localStorage.setItem("language_fox_vocab_status_sort", "recently_added");
       }
     } catch {
       // ignore (e.g. SSR or storage blocked)
@@ -42,7 +44,7 @@ export function KanbanBoard({ initialWords, counts, activeLanguageId, languageNa
   const handleStatusSortByChange = React.useCallback((val: string) => {
     setStatusSortBy(val);
     try {
-      localStorage.setItem("lingofox_vocab_status_sort", val);
+      localStorage.setItem("language_fox_vocab_status_sort", val);
     } catch {
       // ignore
     }

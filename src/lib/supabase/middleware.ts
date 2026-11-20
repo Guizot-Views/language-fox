@@ -23,6 +23,8 @@ export async function updateSession(request: NextRequest) {
   if (!url || !anonKey) {
     if (isProtected) {
       const hasDevSession =
+        request.cookies.has("language_fox_dev_session") ||
+        request.cookies.has("language_fox_session") ||
         request.cookies.has("lingo_fox_dev_session") ||
         request.cookies.has("lingo_fox_session");
       if (!hasDevSession) {

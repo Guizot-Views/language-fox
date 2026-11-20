@@ -128,14 +128,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
               }
               if (onMobileClose) onMobileClose();
             }}
-            aria-label={collapsed ? t.nav.openSidebar : 'Lingo Fox'}
-            title={collapsed ? t.nav.openSidebar : 'Lingo Fox'}
+            aria-label={collapsed ? t.nav.openSidebar : 'Language Fox'}
+            title={collapsed ? t.nav.openSidebar : 'Language Fox'}
             className="flex items-center gap-2.5 min-w-0 text-left group cursor-pointer"
           >
             <div className="w-9 h-9 flex items-center justify-center group-hover:scale-110 active:scale-95 transition-transform shrink-0">
               <Image
                 src="/logo.png"
-                alt="Lingo Fox Logo"
+                alt="Language Fox Logo"
                 width={40}
                 height={40}
                 className="w-full h-full object-contain"
@@ -147,7 +147,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 collapsed ? 'md:hidden' : 'inline'
               }`}
             >
-              Lingo Fox
+              Language Fox
             </span>
           </Link>
 

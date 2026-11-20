@@ -1,4 +1,4 @@
-# 🦊 Lingo Fox — Clever Vocabulary Builder
+# 🦊 Language Fox — Clever Vocabulary Builder
 
 A personal multi-language vocabulary learning and retention manager built with **Next.js**, **TypeScript**, **Supabase (PostgreSQL + Auth + RLS)**, **Tailwind CSS**, and **Lucide Icons**.
 
@@ -6,7 +6,7 @@ A personal multi-language vocabulary learning and retention manager built with *
 
 ## 🎯 Product Overview
 
-**Lingo Fox** powers your language learning through an active, spaced repetition retention loop:
+**Language Fox** powers your language learning through an active, spaced repetition retention loop:
 
 > **Find a word → Save it → Learn it → Review it → Master it**
 
@@ -34,8 +34,8 @@ Words progress through 5 distinct learning stages:
 ### 1. Installation
 
 ```bash
-git clone https://github.com/guizot/lingo-fox.git
-cd lingo-fox
+git clone https://github.com/guizot/language-fox.git
+cd language-fox
 npm install
 ```
 
@@ -65,7 +65,7 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=your-supabase-anon-key
 NEXT_PUBLIC_APP_URL=http://localhost:3000
 ```
 
-> **Note**: For local offline preview or automated testing without live Supabase credentials, the app falls back to a local JSON store (`.lingo-fox-data.json`).
+> **Note**: For local offline preview or automated testing without live Supabase credentials, the app falls back to a local JSON store (`.language-fox-data.json`).
 
 ### 4. Running the Development Server
 
@@ -95,7 +95,7 @@ This validates:
 ## 📂 Project Architecture
 
 ```text
-lingo-fox/
+language-fox/
 ├── supabase/
 │   └── schema.sql                       # PostgreSQL tables, indexes, triggers, RLS, and language seed
 ├── src/

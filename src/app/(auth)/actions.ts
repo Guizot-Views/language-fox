@@ -87,7 +87,7 @@ export async function loginAction(
     name: email.split("@")[0] || "Learner",
     email,
   });
-  cookieStore.set("lingo_fox_dev_session", devPayload, {
+  cookieStore.set("language_fox_dev_session", devPayload, {
     path: "/",
     httpOnly: true,
     maxAge: 60 * 60 * 24 * 7,
@@ -185,7 +185,7 @@ export async function signupAction(
     name: displayName,
     email,
   });
-  cookieStore.set("lingo_fox_dev_session", devSignupPayload, {
+  cookieStore.set("language_fox_dev_session", devSignupPayload, {
     path: "/",
     httpOnly: true,
     maxAge: 60 * 60 * 24 * 7,
@@ -206,6 +206,8 @@ export async function logoutAction() {
   }
 
   const cookieStore = await cookies();
+  cookieStore.delete("language_fox_session");
+  cookieStore.delete("language_fox_dev_session");
   cookieStore.delete("lingo_fox_session");
   cookieStore.delete("grwly_session");
   cookieStore.delete("lingo_fox_dev_session");
@@ -266,6 +268,8 @@ export async function updateProfileAction(newName: string) {
   // Offline development fallback
   const cookieStore = await cookies();
   const sessionCookie =
+    cookieStore.get("language_fox_dev_session") ||
+    cookieStore.get("language_fox_session") ||
     cookieStore.get("lingo_fox_dev_session") ||
     cookieStore.get("lingo_fox_session");
 
@@ -273,7 +277,7 @@ export async function updateProfileAction(newName: string) {
     try {
       const parsed = JSON.parse(sessionCookie.value);
       parsed.name = cleanName;
-      cookieStore.set("lingo_fox_dev_session", JSON.stringify(parsed), {
+      cookieStore.set("language_fox_dev_session", JSON.stringify(parsed), {
         path: "/",
         httpOnly: true,
         maxAge: 60 * 60 * 24 * 7,

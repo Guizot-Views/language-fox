@@ -8,7 +8,7 @@ import { SidebarProvider } from "@/context/SidebarContext";
 
 
 export const metadata: Metadata = {
-  title: "Lingo Fox",
+  title: "Language Fox",
   description:
     "A personal multi-language vocabulary manager and retention system powered by spaced repetition.",
   icons: {
@@ -82,12 +82,12 @@ export default async function RootLayout({
               } catch (e) {}
 
               try {
-                const accent = localStorage.getItem('lingo_fox_accent_preference') || localStorage.getItem('travel_accent_preference') || 'cyan';
+                const accent = localStorage.getItem('language_fox_accent_preference') || localStorage.getItem('lingo_fox_accent_preference') || 'cyan';
                 document.documentElement.setAttribute('data-accent', accent);
               } catch (e) {}
 
               try {
-                const lang = localStorage.getItem('lingo_fox_ui_lang') || localStorage.getItem('language_preference');
+                const lang = localStorage.getItem('language_fox_ui_lang') || localStorage.getItem('lingo_fox_ui_lang') || localStorage.getItem('language_preference');
                 if (lang === 'en' || lang === 'id') {
                   document.documentElement.setAttribute('lang', lang);
                 }

@@ -128,7 +128,7 @@ export const AuthView: React.FC<AuthViewProps> = ({ initialMode = 'signin' }) =>
           <div className="w-14 h-14 sm:w-14 sm:h-14 flex items-center justify-center mx-auto">
             <Image
               src="/logo.png"
-              alt="Lingo Fox Logo"
+              alt="Language Fox Logo"
               width={56}
               height={56}
               className="w-full h-full object-contain"
@@ -136,7 +136,7 @@ export const AuthView: React.FC<AuthViewProps> = ({ initialMode = 'signin' }) =>
             />
           </div>
           <h1 className="text-2xl sm:text-3xl font-black text-zinc-900 dark:text-zinc-100 tracking-tight">
-            Lingo Fox
+            Language Fox
           </h1>
           <p className="text-sm text-zinc-600 dark:text-zinc-400 max-w-xs mx-auto leading-relaxed">
             Kuasai kosakata bahasa asing dengan metode spaced repetition yang cerdas.
@@ -292,7 +292,7 @@ export const AuthView: React.FC<AuthViewProps> = ({ initialMode = 'signin' }) =>
 
         {/* Footer info */}
         <p className="text-center text-xs text-zinc-400 dark:text-zinc-500 font-medium">
-          Lingo Fox &copy; 2026. Powered by Supabase.
+          Language Fox &copy; 2026. Powered by Supabase.
         </p>
       </div>
     </div>

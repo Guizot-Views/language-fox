@@ -1,5 +1,5 @@
 -- ==============================================================================
--- LINGO FOX DATABASE SCHEMA (SUPABASE / POSTGRESQL)
+-- LANGUAGE FOX DATABASE SCHEMA (SUPABASE / POSTGRESQL)
 -- ==============================================================================
 -- Cara Menggunakan:
 -- 1. Buat proyek baru di https://supabase.com

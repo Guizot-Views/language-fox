@@ -1,8 +1,8 @@
 import { AuthView } from "@/components/AuthView";
 
 export const metadata = {
-  title: "Daftar Akun — Lingo Fox",
-  description: "Buat akun baru di Lingo Fox",
+  title: "Daftar Akun — Language Fox",
+  description: "Buat akun baru di Language Fox",
 };
 
 export default function SignupPage() {

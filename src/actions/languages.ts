@@ -7,12 +7,7 @@ import { addUserLanguage, removeUserLanguage } from "@/lib/db/languages";
 
 export async function setActiveLanguageAction(languageId: number) {
   const cookieStore = await cookies();
-  cookieStore.set("lingo_fox_active_lang", languageId.toString(), {
-    path: "/",
-    maxAge: 60 * 60 * 24 * 365, // 1 year
-    sameSite: "lax",
-  });
-  cookieStore.set("grwly_active_lang", languageId.toString(), {
+  cookieStore.set("language_fox_active_lang", languageId.toString(), {
     path: "/",
     maxAge: 60 * 60 * 24 * 365, // 1 year
     sameSite: "lax",

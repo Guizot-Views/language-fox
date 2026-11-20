@@ -56,8 +56,7 @@ export const ACCENT_OPTIONS: AccentOption[] = [
 export function applyAccent(accent: AccentColor) {
   if (typeof window === 'undefined') return;
   try {
-    localStorage.setItem('lingo_fox_accent_preference', accent);
-    localStorage.setItem('travel_accent_preference', accent);
+    localStorage.setItem('language_fox_accent_preference', accent);
   } catch {}
   document.documentElement.setAttribute('data-accent', accent);
 }
@@ -65,7 +64,11 @@ export function applyAccent(accent: AccentColor) {
 export function getStoredAccent(): AccentColor {
   if (typeof window === 'undefined') return 'cyan';
   try {
-    const stored = (localStorage.getItem('lingo_fox_accent_preference') || localStorage.getItem('travel_accent_preference')) as AccentColor;
+    const stored = (
+      localStorage.getItem('language_fox_accent_preference') ||
+      localStorage.getItem('lingo_fox_accent_preference') ||
+      localStorage.getItem('travel_accent_preference')
+    ) as AccentColor;
     if (stored && ACCENT_OPTIONS.some((o) => o.id === stored)) {
       return stored;
     }

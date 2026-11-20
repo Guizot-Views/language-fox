@@ -16,7 +16,11 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
   useEffect(() => {
     try {
-      const stored = (localStorage.getItem('lingo_fox_ui_lang') || localStorage.getItem('language_preference')) as UILanguage | null;
+      const stored = (
+        localStorage.getItem('language_fox_ui_lang') ||
+        localStorage.getItem('lingo_fox_ui_lang') ||
+        localStorage.getItem('language_preference')
+      ) as UILanguage | null;
       if (stored === 'en' || stored === 'id') {
         setLanguageState(stored);
       } else {
@@ -35,7 +39,7 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const setLanguage = useCallback((lang: UILanguage) => {
     setLanguageState(lang);
     try {
-      localStorage.setItem('lingo_fox_ui_lang', lang);
+      localStorage.setItem('language_fox_ui_lang', lang);
       localStorage.setItem('language_preference', lang);
       document.documentElement.setAttribute('lang', lang);
     } catch {
