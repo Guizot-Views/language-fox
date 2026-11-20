@@ -34,7 +34,7 @@ Words progress through 5 distinct learning stages:
 ### 1. Installation
 
 ```bash
-git clone https://github.com/guizot/language-fox.git
+git clone https://github.com/Guizot-Views/language-fox.git
 cd language-fox
 npm install
 ```
