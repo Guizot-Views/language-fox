@@ -1,8 +1,7 @@
 import { Language, UserLanguage } from "@/types";
 import { getLocalStore } from "./store";
-import { db } from "@/db";
-import * as schema from "@/db/schema";
-import { eq, and, count } from "drizzle-orm";
+import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { isSupabaseConfigured } from "@/lib/supabase/config";
 
 const isTestEnv = process.env.NODE_ENV === "test" || Boolean(process.env.NODE_TEST_CONTEXT);
 
@@ -18,25 +17,75 @@ export const SUPPORTED_LANGUAGES: Omit<Language, "id" | "createdAt">[] = [
   { code: "zh", name: "Chinese", nativeName: "中文", flag: "🇨🇳" },
 ];
 
+interface LanguageRow {
+  id: number;
+  code: string;
+  name: string;
+  native_name: string;
+  flag: string;
+  created_at: string;
+}
+
+interface UserLanguageRow {
+  id: number;
+  user_id: string;
+  language_id: number;
+  translation_language_id: number | null;
+  created_at: string;
+  updated_at: string;
+  language: LanguageRow | LanguageRow[] | null;
+  translation_language: LanguageRow | LanguageRow[] | null;
+}
+
+function unwrapSingle<T>(value: T | T[] | null | undefined): T | null {
+  if (!value) return null;
+  return Array.isArray(value) ? value[0] ?? null : value;
+}
+
+export function mapLanguageRow(row: LanguageRow): Language {
+  return {
+    id: row.id,
+    code: row.code,
+    name: row.name,
+    nativeName: row.native_name,
+    flag: row.flag,
+    createdAt: new Date(row.created_at),
+  };
+}
+
+const USER_LANGUAGE_SELECT = `
+  id,
+  user_id,
+  language_id,
+  translation_language_id,
+  created_at,
+  updated_at,
+  language:languages!user_languages_language_id_fkey(*),
+  translation_language:languages!user_languages_translation_language_id_fkey(*)
+`;
+
 /**
  * Returns all supported languages
  */
 export async function getLanguages(): Promise<Language[]> {
-  if (db && !isTestEnv) {
+  if (!isTestEnv && isSupabaseConfigured()) {
     try {
-      const rows = await db.select().from(schema.languages);
-      if (rows.length > 0) {
-        return rows.map((l) => ({
-          id: l.id,
-          code: l.code,
-          name: l.name,
-          nativeName: l.nativeName,
-          flag: l.flag,
-          createdAt: new Date(l.createdAt),
-        }));
+      const supabase = await createSupabaseServerClient();
+      if (supabase) {
+        const { data, error } = await supabase
+          .from("languages")
+          .select("*")
+          .order("id", { ascending: true });
+
+        if (!error && data && data.length > 0) {
+          return (data as LanguageRow[]).map(mapLanguageRow);
+        }
+        if (error) {
+          console.error("Supabase getLanguages failed, falling back:", error.message);
+        }
       }
     } catch (e) {
-      console.error("Direct Neon DB getLanguages failed, falling back:", e);
+      console.error("Supabase getLanguages failed, falling back:", e);
     }
   }
 
@@ -48,56 +97,55 @@ export async function getLanguages(): Promise<Language[]> {
  * Returns languages enrolled by the user
  */
 export async function getUserLanguages(userId: string): Promise<UserLanguage[]> {
-  if (db && !isTestEnv) {
+  if (!isTestEnv && isSupabaseConfigured()) {
     try {
-      const userLangs = await db.query.userLanguages.findMany({
-        where: eq(schema.userLanguages.userId, userId),
-        with: {
-          language: true,
-          translationLanguage: true,
-        },
-      });
+      const supabase = await createSupabaseServerClient();
+      if (supabase) {
+        const [userLangsRes, vocabRes] = await Promise.all([
+          supabase
+            .from("user_languages")
+            .select(USER_LANGUAGE_SELECT)
+            .eq("user_id", userId)
+            .order("created_at", { ascending: true }),
+          supabase
+            .from("vocabulary")
+            .select("language_id")
+            .eq("user_id", userId),
+        ]);
 
-      const vocabCounts = await db
-        .select({
-          languageId: schema.vocabulary.languageId,
-          count: count(),
-        })
-        .from(schema.vocabulary)
-        .where(eq(schema.vocabulary.userId, userId))
-        .groupBy(schema.vocabulary.languageId);
+        if (userLangsRes.error) {
+          throw new Error(userLangsRes.error.message);
+        }
 
-      const countMap = new Map(vocabCounts.map((vc) => [vc.languageId, Number(vc.count)]));
+        const countMap = new Map<number, number>();
+        if (!vocabRes.error && vocabRes.data) {
+          for (const row of vocabRes.data as { language_id: number }[]) {
+            countMap.set(row.language_id, (countMap.get(row.language_id) || 0) + 1);
+          }
+        }
 
-      return userLangs.map((ul) => ({
-        id: ul.id,
-        userId: ul.userId,
-        languageId: ul.languageId,
-        translationLanguageId: ul.translationLanguageId,
-        language: {
-          id: ul.language.id,
-          code: ul.language.code,
-          name: ul.language.name,
-          nativeName: ul.language.nativeName,
-          flag: ul.language.flag,
-          createdAt: new Date(ul.language.createdAt),
-        },
-        translationLanguage: ul.translationLanguage
-          ? {
-              id: ul.translationLanguage.id,
-              code: ul.translationLanguage.code,
-              name: ul.translationLanguage.name,
-              nativeName: ul.translationLanguage.nativeName,
-              flag: ul.translationLanguage.flag,
-              createdAt: new Date(ul.translationLanguage.createdAt),
-            }
-          : null,
-        wordCount: countMap.get(ul.languageId) || 0,
-        createdAt: new Date(ul.createdAt),
-        updatedAt: new Date(ul.updatedAt),
-      }));
+        return ((userLangsRes.data || []) as unknown as UserLanguageRow[])
+          .map((ul): UserLanguage | null => {
+            const langRow = unwrapSingle(ul.language);
+            if (!langRow) return null;
+            const transLangRow = unwrapSingle(ul.translation_language);
+
+            return {
+              id: ul.id,
+              userId: ul.user_id,
+              languageId: ul.language_id,
+              translationLanguageId: ul.translation_language_id,
+              language: mapLanguageRow(langRow),
+              translationLanguage: transLangRow ? mapLanguageRow(transLangRow) : null,
+              wordCount: countMap.get(ul.language_id) || 0,
+              createdAt: new Date(ul.created_at),
+              updatedAt: new Date(ul.updated_at),
+            };
+          })
+          .filter((item): item is UserLanguage => item !== null);
+      }
     } catch (e) {
-      console.error("Direct Neon DB getUserLanguages failed, falling back:", e);
+      console.error("Supabase getUserLanguages failed, falling back:", e);
     }
   }
 
@@ -135,87 +183,66 @@ export async function addUserLanguage(
   languageId: number,
   translationLanguageId?: number | null
 ): Promise<UserLanguage> {
-  if (db && !isTestEnv) {
+  if (!isTestEnv && isSupabaseConfigured()) {
     try {
-      const now = new Date();
-      const [entry] = await db
-        .insert(schema.userLanguages)
-        .values({
-          userId,
-          languageId,
-          translationLanguageId: translationLanguageId || null,
-          createdAt: now,
-          updatedAt: now,
-        })
-        .onConflictDoUpdate({
-          target: [schema.userLanguages.userId, schema.userLanguages.languageId],
-          set: {
-            translationLanguageId: translationLanguageId || null,
-            updatedAt: now,
-          },
-        })
-        .returning();
-
-      const lang = await db.query.languages.findFirst({
-        where: eq(schema.languages.id, languageId),
-      });
-
-      const transLang = translationLanguageId
-        ? await db.query.languages.findFirst({
-            where: eq(schema.languages.id, translationLanguageId),
-          })
-        : null;
-
-      const wordCountRow = await db
-        .select({ count: count() })
-        .from(schema.vocabulary)
-        .where(
-          and(
-            eq(schema.vocabulary.userId, userId),
-            eq(schema.vocabulary.languageId, languageId)
+      const supabase = await createSupabaseServerClient();
+      if (supabase) {
+        const now = new Date().toISOString();
+        const { data: entry, error } = await supabase
+          .from("user_languages")
+          .upsert(
+            {
+              user_id: userId,
+              language_id: languageId,
+              translation_language_id: translationLanguageId || null,
+              updated_at: now,
+            },
+            { onConflict: "user_id,language_id" }
           )
-        );
+          .select(USER_LANGUAGE_SELECT)
+          .single();
 
-      return {
-        id: entry.id,
-        userId: entry.userId,
-        languageId: entry.languageId,
-        translationLanguageId: entry.translationLanguageId,
-        language: {
-          id: lang!.id,
-          code: lang!.code,
-          name: lang!.name,
-          nativeName: lang!.nativeName,
-          flag: lang!.flag,
-          createdAt: new Date(lang!.createdAt),
-        },
-        translationLanguage: transLang
-          ? {
-              id: transLang.id,
-              code: transLang.code,
-              name: transLang.name,
-              nativeName: transLang.nativeName,
-              flag: transLang.flag,
-              createdAt: new Date(transLang.createdAt),
-            }
-          : null,
-        wordCount: Number(wordCountRow[0]?.count || 0),
-        createdAt: new Date(entry.createdAt),
-        updatedAt: new Date(entry.updatedAt),
-      };
+        if (error || !entry) {
+          throw new Error(error?.message || "Failed to upsert user language");
+        }
+
+        const { count } = await supabase
+          .from("vocabulary")
+          .select("id", { count: "exact", head: true })
+          .eq("user_id", userId)
+          .eq("language_id", languageId);
+
+        const row = entry as unknown as UserLanguageRow;
+        const langRow = unwrapSingle(row.language)!;
+        const transLangRow = unwrapSingle(row.translation_language);
+
+        return {
+          id: row.id,
+          userId: row.user_id,
+          languageId: row.language_id,
+          translationLanguageId: row.translation_language_id,
+          language: mapLanguageRow(langRow),
+          translationLanguage: transLangRow ? mapLanguageRow(transLangRow) : null,
+          wordCount: count || 0,
+          createdAt: new Date(row.created_at),
+          updatedAt: new Date(row.updated_at),
+        };
+      }
     } catch (e) {
-      console.error("Direct Neon DB addUserLanguage failed, falling back:", e);
+      console.error("Supabase addUserLanguage failed, falling back:", e);
     }
   }
 
   const store = await getLocalStore();
-  
-  // Check if already enrolled
+
   const existing = store.userLanguages.find(
     (ul) => ul.userId === userId && ul.languageId === languageId
   );
   if (existing) {
-    if (translationLanguageId !== undefined && existing.translationLanguageId !== translationLanguageId) {
+    if (
+      translationLanguageId !== undefined &&
+      existing.translationLanguageId !== translationLanguageId
+    ) {
       existing.translationLanguageId = translationLanguageId || null;
       existing.updatedAt = new Date();
       await store.save();
@@ -228,13 +255,16 @@ export async function addUserLanguage(
       ...existing,
       language: lang,
       translationLanguage: transLang,
-      wordCount: store.vocabulary.filter((v) => v.userId === userId && v.languageId === lang.id).length,
+      wordCount: store.vocabulary.filter(
+        (v) => v.userId === userId && v.languageId === lang.id
+      ).length,
     };
   }
 
-  const newId = store.userLanguages.length > 0
-    ? Math.max(...store.userLanguages.map((ul) => ul.id)) + 1
-    : 1;
+  const newId =
+    store.userLanguages.length > 0
+      ? Math.max(...store.userLanguages.map((ul) => ul.id)) + 1
+      : 1;
 
   const newEntry = {
     id: newId,
@@ -264,28 +294,33 @@ export async function addUserLanguage(
 /**
  * Removes a learning language for the user
  */
-export async function removeUserLanguage(userId: string, languageId: number): Promise<boolean> {
-  if (db && !isTestEnv) {
+export async function removeUserLanguage(
+  userId: string,
+  languageId: number
+): Promise<boolean> {
+  if (!isTestEnv && isSupabaseConfigured()) {
     try {
-      await db
-        .delete(schema.userLanguages)
-        .where(
-          and(
-            eq(schema.userLanguages.userId, userId),
-            eq(schema.userLanguages.languageId, languageId)
-          )
-        );
-      await db
-        .delete(schema.vocabulary)
-        .where(
-          and(
-            eq(schema.vocabulary.userId, userId),
-            eq(schema.vocabulary.languageId, languageId)
-          )
-        );
-      return true;
+      const supabase = await createSupabaseServerClient();
+      if (supabase) {
+        const [ulRes, vocabRes] = await Promise.all([
+          supabase
+            .from("user_languages")
+            .delete()
+            .eq("user_id", userId)
+            .eq("language_id", languageId),
+          supabase
+            .from("vocabulary")
+            .delete()
+            .eq("user_id", userId)
+            .eq("language_id", languageId),
+        ]);
+
+        if (ulRes.error) throw new Error(ulRes.error.message);
+        if (vocabRes.error) throw new Error(vocabRes.error.message);
+        return true;
+      }
     } catch (e) {
-      console.error("Direct Neon DB removeUserLanguage failed, falling back:", e);
+      console.error("Supabase removeUserLanguage failed, falling back:", e);
     }
   }
 
@@ -294,7 +329,6 @@ export async function removeUserLanguage(userId: string, languageId: number): Pr
   store.userLanguages = store.userLanguages.filter(
     (ul) => !(ul.userId === userId && ul.languageId === languageId)
   );
-  // Also remove vocabulary items for that language owned by user
   store.vocabulary = store.vocabulary.filter(
     (v) => !(v.userId === userId && v.languageId === languageId)
   );

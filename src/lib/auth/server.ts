@@ -1,16 +1,6 @@
-import { createNeonAuth } from "@neondatabase/auth/next/server";
 import { cookies } from "next/headers";
-
-const isNeonAuthConfigured = Boolean(
-  process.env.NEON_AUTH_BASE_URL && process.env.NEON_AUTH_COOKIE_SECRET
-);
-
-export const auth = createNeonAuth({
-  baseUrl: process.env.NEON_AUTH_BASE_URL || "https://placeholder.neonauth.us-east-1.aws.neon.tech/neondb/auth",
-  cookies: {
-    secret: process.env.NEON_AUTH_COOKIE_SECRET || "default_development_secret_32_characters_long_min",
-  },
-});
+import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { isSupabaseConfigured } from "@/lib/supabase/config";
 
 export interface UserSession {
   id: string;
@@ -20,27 +10,62 @@ export interface UserSession {
 }
 
 /**
- * Returns the current authenticated session.
- * Checks grwly_session, grwly_dev_session, or queries Neon Auth.
+ * Returns the current authenticated session from Supabase Auth.
+ * Falls back to local dev session cookie ONLY when Supabase env vars are not configured.
  */
 export async function getSession(): Promise<{ user: UserSession | null }> {
-  const cookieStore = await cookies();
+  if (isSupabaseConfigured()) {
+    const supabase = await createSupabaseServerClient();
+    if (!supabase) {
+      return { user: null };
+    }
 
-  // 1. Check verified session cookie
-  const sessionCookie = cookieStore.get("lingo_fox_session") || cookieStore.get("grwly_session");
-  if (sessionCookie?.value) {
     try {
-      const parsed = JSON.parse(sessionCookie.value);
-      if (parsed?.id) {
-        return { user: parsed };
+      const {
+        data: { user },
+        error,
+      } = await supabase.auth.getUser();
+
+      if (error || !user) {
+        return { user: null };
       }
-    } catch {
-      // ignore
+
+      const fallbackName =
+        (user.user_metadata?.display_name as string | undefined)?.trim() ||
+        (user.user_metadata?.full_name as string | undefined)?.trim() ||
+        user.email?.split("@")[0] ||
+        "Learner";
+
+      // Fetch profile display_name & avatar_url if available
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("display_name, avatar_url")
+        .eq("id", user.id)
+        .maybeSingle();
+
+      return {
+        user: {
+          id: user.id,
+          name: profile?.display_name?.trim() || fallbackName,
+          email: user.email || "",
+          avatarUrl:
+            profile?.avatar_url ||
+            (user.user_metadata?.avatar_url as string | undefined) ||
+            null,
+        },
+      };
+    } catch (err) {
+      console.warn("Supabase Auth getUser failed:", err);
+      return { user: null };
     }
   }
 
-  // 2. Check local dev session cookie
-  const devSessionCookie = cookieStore.get("lingo_fox_dev_session") || cookieStore.get("grwly_dev_session");
+  // Offline local dev fallback when Supabase is not configured
+  const cookieStore = await cookies();
+  const devSessionCookie =
+    cookieStore.get("lingo_fox_dev_session") ||
+    cookieStore.get("lingo_fox_session");
+
   if (devSessionCookie?.value) {
     try {
       const parsed = JSON.parse(devSessionCookie.value);
@@ -48,30 +73,10 @@ export async function getSession(): Promise<{ user: UserSession | null }> {
         return { user: parsed };
       }
     } catch {
-      // ignore
+      // ignore invalid cookie
     }
   }
 
-  // 3. Fallback to Neon Auth upstream session check
-  if (isNeonAuthConfigured) {
-    try {
-      const { data } = await auth.getSession();
-      if (data?.user) {
-        return {
-          user: {
-            id: data.user.id,
-            name: data.user.name || data.user.email?.split("@")[0] || "User",
-            email: data.user.email,
-            avatarUrl: data.user.image,
-          },
-        };
-      }
-    } catch (err) {
-      console.warn("Neon Auth getSession failed:", err);
-    }
-  }
-
-  // If not authenticated, return null
   return { user: null };
 }
 

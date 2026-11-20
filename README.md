@@ -1,6 +1,6 @@
 # 🦊 Lingo Fox — Clever Vocabulary Builder
 
-A personal multi-language vocabulary learning and retention manager built with **Next.js**, **TypeScript**, **Neon PostgreSQL**, **Neon Auth**, **Drizzle ORM**, **Tailwind CSS**, and **Lucide Icons**.
+A personal multi-language vocabulary learning and retention manager built with **Next.js**, **TypeScript**, **Supabase (PostgreSQL + Auth + RLS)**, **Tailwind CSS**, and **Lucide Icons**.
 
 ---
 
@@ -24,9 +24,7 @@ Words progress through 5 distinct learning stages:
 - **Framework**: Next.js (App Router) & React 19
 - **Language**: TypeScript
 - **Styling**: Tailwind CSS & Lucide Icons
-- **Database**: Neon PostgreSQL
-- **ORM**: Drizzle ORM (`drizzle-orm`, `drizzle-kit`)
-- **Authentication**: Neon Auth (`@neondatabase/auth`)
+- **Database & Auth**: Supabase (`@supabase/supabase-js`, `@supabase/ssr`) with PostgreSQL Row Level Security (RLS)
 - **Testing**: Node.js test runner with `npx tsx`
 
 ---
@@ -41,7 +39,17 @@ cd lingo-fox
 npm install
 ```
 
-### 2. Environment Variables
+### 2. Supabase Database Setup
+
+1. Create a new project in [Supabase](https://supabase.com/dashboard).
+2. Open **SQL Editor** in your Supabase project dashboard.
+3. Paste and run the full contents of [`supabase/schema.sql`](./supabase/schema.sql).
+   - Creates all 8 relational tables (`profiles`, `languages`, `user_languages`, `vocabulary`, `vocabulary_examples`, `vocabulary_reviews`, `tags`, `vocabulary_tags`).
+   - Enables Row Level Security (RLS) policies on every table.
+   - Adds `updated_at` and automatic profile creation (`on_auth_user_created`) triggers.
+   - Seeds the 9 supported languages into `public.languages`.
+
+### 3. Environment Variables
 
 Copy `.env.example` to `.env.local`:
 
@@ -49,27 +57,15 @@ Copy `.env.example` to `.env.local`:
 cp .env.example .env.local
 ```
 
-Populate your credentials from the [Neon Console](https://console.neon.tech):
+Populate your credentials from **Supabase Dashboard → Project Settings → API**:
+
 ```env
-# Neon PostgreSQL Connection String
-DATABASE_URL=postgresql://user:password@ep-sample-123456.us-east-2.aws.neon.tech/neondb?sslmode=require
-
-# Neon Auth Configuration (Project -> Branch -> Auth -> Configuration)
-NEON_AUTH_BASE_URL=https://ep-sample-123456.neonauth.us-east-2.aws.neon.tech/neondb/auth
-NEON_AUTH_COOKIE_SECRET=your_32_characters_secret_here
+NEXT_PUBLIC_SUPABASE_URL=https://your-project-id.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your-supabase-anon-key
+NEXT_PUBLIC_APP_URL=http://localhost:3000
 ```
 
-> **Note**: For immediate local development and evaluation without live Neon credentials, the app includes an automatic demo development session so all features, CRUD, reviews, and dashboards can be explored immediately!
-
-### 3. Database Migrations (Drizzle ORM)
-
-```bash
-# Generate SQL migrations
-npm run db:generate
-
-# Push schema changes to Neon PostgreSQL
-npm run db:push
-```
+> **Note**: For local offline preview or automated testing without live Supabase credentials, the app falls back to a local JSON store (`.lingo-fox-data.json`).
 
 ### 4. Running the Development Server
 
@@ -100,12 +96,16 @@ This validates:
 
 ```text
 lingo-fox/
+├── supabase/
+│   └── schema.sql                       # PostgreSQL tables, indexes, triggers, RLS, and language seed
 ├── src/
 │   ├── app/
 │   │   ├── (auth)/
 │   │   │   ├── login/page.tsx           # Email/password authentication
 │   │   │   ├── signup/page.tsx          # Account registration
-│   │   │   └── actions.ts               # Auth server actions
+│   │   │   └── actions.ts               # Supabase Auth server actions
+│   │   ├── auth/
+│   │   │   └── callback/route.ts        # Supabase Auth PKCE callback handler
 │   │   ├── (app)/
 │   │   │   ├── layout.tsx               # App shell (Sidebar, Header, Language selector)
 │   │   │   ├── dashboard/page.tsx       # Today's review banner, status counters, forgotten words
@@ -115,9 +115,7 @@ lingo-fox/
 │   │   │   ├── review/
 │   │   │   │   └── page.tsx             # Interactive review (Recognition & Recall)
 │   │   │   ├── languages/page.tsx       # Enrolled languages and translation pairs
-│   │   │   └── settings/page.tsx        # User profile & daily review goals
-│   │   ├── api/
-│   │   │   └── auth/[...path]/route.ts  # Neon Auth API proxy handler
+│   │   │   └── settings/page.tsx        # User profile & preferences
 │   │   ├── layout.tsx                   # Root HTML & metadata
 │   │   ├── page.tsx                     # Root redirect
 │   │   └── globals.css                  # Tailwind styles
@@ -128,15 +126,14 @@ lingo-fox/
 │   │   ├── review/                      # ReviewSession, RecognitionCard, RecallCard, DifficultyRating
 │   │   ├── dashboard/                   # ReviewBanner, StatusDistribution, DueWordsList, ForgottenWordsCard
 │   │   └── language/                    # LanguageManager, AddLanguageModal
-│   ├── db/
-│   │   ├── schema.ts                    # Drizzle schema (8 relational tables)
-│   │   └── index.ts                     # Database connection
 │   ├── lib/
-│   │   ├── auth/                        # Neon Auth server & client instances
+│   │   ├── supabase/                    # Supabase SSR client, server, middleware & config helpers
+│   │   ├── auth/                        # Server session helpers (getSession, requireUser)
 │   │   ├── db/                          # Isolated data-access layer (vocabulary, reviews, languages)
 │   │   ├── spaced-repetition/           # Deterministic spaced repetition algorithm & unit tests
 │   │   └── utils.ts                     # Normalization & date utilities
 │   ├── actions/                         # Server actions (vocabulary, languages, reviews)
+│   ├── proxy.ts                         # Next.js proxy for Supabase session refresh & route protection
 │   └── types/                           # Domain TypeScript types
 ```
 
@@ -144,4 +141,4 @@ lingo-fox/
 
 ## 🔒 Security & Authorization
 
-All data queries and mutations derive ownership directly from the server-side authenticated session via `requireUser()`. Client-submitted IDs are never trusted blindly, preventing unauthorized access across user boundaries.
+All data queries and mutations derive ownership directly from the server-side Supabase Auth session via `requireUser()`, backed by PostgreSQL **Row Level Security (RLS)** policies (`auth.uid() = user_id`) on every user-owned table.

@@ -93,6 +93,13 @@ export const AuthView: React.FC<AuthViewProps> = ({ initialMode = 'signin' }) =>
           setLoading(false);
           return;
         }
+        if (result?.requiresEmailConfirmation) {
+          setSuccessMsg(
+            'Pendaftaran berhasil! Silakan periksa kotak masuk email Anda untuk konfirmasi sebelum masuk.'
+          );
+          setLoading(false);
+          return;
+        }
         setSuccessMsg('Pendaftaran berhasil! Mengalihkan ke dashboard...');
         setTimeout(() => {
           window.location.href = '/dashboard';
@@ -285,7 +292,7 @@ export const AuthView: React.FC<AuthViewProps> = ({ initialMode = 'signin' }) =>
 
         {/* Footer info */}
         <p className="text-center text-xs text-zinc-400 dark:text-zinc-500 font-medium">
-          Lingo Fox &copy; 2026. Powered by Neon PostgreSQL Database.
+          Lingo Fox &copy; 2026. Powered by Supabase.
         </p>
       </div>
     </div>

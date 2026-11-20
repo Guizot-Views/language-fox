@@ -8,174 +8,74 @@ import {
 } from "@/types";
 import { getLocalStore } from "./store";
 import { calculateNextReview } from "../spaced-repetition/algorithm";
-import { getVocabularyByIdForUser } from "./vocabulary";
-import { db } from "@/db";
-import * as schema from "@/db/schema";
-import { eq, and, or, lte, gte, desc, sql } from "drizzle-orm";
+import { getVocabularyByIdForUser, mapVocabularyRow, VocabularyRow } from "./vocabulary";
+import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { isSupabaseConfigured } from "@/lib/supabase/config";
 
 const isTestEnv = process.env.NODE_ENV === "test" || Boolean(process.env.NODE_TEST_CONTEXT);
 
-/**
- * Returns the prioritized review queue for a user and learning language.
- */
-export async function getReviewQueue(
-  userId: string,
-  languageId?: number,
-  limit: number = 20
-): Promise<ReviewQueueItem[]> {
-  if (db && !isTestEnv) {
-    try {
-      const now = new Date();
-      const endOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+interface VocabularyReviewRow {
+  id: number;
+  vocabulary_id: number;
+  user_id: string;
+  review_type: string;
+  is_correct: boolean;
+  difficulty: string;
+  reviewed_at: string;
+}
 
-      const conditions = [
-        eq(schema.vocabulary.userId, userId),
-        or(lte(schema.vocabulary.nextReviewAt, endOfToday), eq(schema.vocabulary.status, "new")),
-      ];
-      if (languageId) {
-        conditions.push(eq(schema.vocabulary.languageId, languageId));
-      }
+function mapReviewRow(row: VocabularyReviewRow): VocabularyReview {
+  return {
+    id: row.id,
+    vocabularyId: row.vocabulary_id,
+    userId: row.user_id,
+    reviewType: row.review_type as ReviewType,
+    isCorrect: row.is_correct,
+    difficulty: row.difficulty as ReviewDifficulty,
+    reviewedAt: new Date(row.reviewed_at),
+  };
+}
 
-      const rows = await db.query.vocabulary.findMany({
-        where: and(...conditions),
-      });
+function calculatePriority(item: VocabularyItem, now: Date): number {
+  let score = 0;
+  const diffMs = now.getTime() - item.nextReviewAt.getTime();
+  const overdueDays = diffMs / (1000 * 60 * 60 * 24);
 
-      let candidates: VocabularyItem[] = rows.map((r) => ({
-        ...r,
-        status: r.status as VocabularyStatus,
-        createdAt: new Date(r.createdAt),
-        updatedAt: new Date(r.updatedAt),
-        nextReviewAt: new Date(r.nextReviewAt),
-        lastReviewedAt: r.lastReviewedAt ? new Date(r.lastReviewedAt) : null,
-      }));
-
-      function calculatePriority(item: VocabularyItem): number {
-        let score = 0;
-        const diffMs = now.getTime() - item.nextReviewAt.getTime();
-        const overdueDays = diffMs / (1000 * 60 * 60 * 24);
-
-        if (overdueDays > 0) {
-          score += Math.min(50, overdueDays * 10);
-        }
-
-        if (item.status === "learning") score += 30;
-        else if (item.status === "new") score += 25;
-        else if (item.status === "familiar") score += 15;
-        else if (item.status === "strong") score += 10;
-        else if (item.status === "mastered") score += 5;
-
-        if (item.wrongCount > 0) {
-          score += Math.min(30, item.wrongCount * 8);
-        }
-
-        return score;
-      }
-
-      candidates.sort((a, b) => calculatePriority(b) - calculatePriority(a));
-      const queue = candidates.slice(0, limit);
-
-      const otherWordsRows = await db
-        .select({ id: schema.vocabulary.id, meaning: schema.vocabulary.meaning })
-        .from(schema.vocabulary)
-        .where(
-          and(
-            eq(schema.vocabulary.userId, userId),
-            languageId ? eq(schema.vocabulary.languageId, languageId) : sql`1=1`
-          )
-        );
-
-      return queue.map((item) => {
-        const otherWords = otherWordsRows.filter((w) => w.id !== item.id && w.meaning !== item.meaning);
-        const shuffledOthers = [...otherWords].sort(() => 0.5 - Math.random());
-        const distractors = shuffledOthers.slice(0, 3).map((w) => w.meaning);
-
-        const fallbackDistractors = [
-          "cepat dan mudah (fast and simple)",
-          "kurang menyenangkan (unpleasant)",
-          "sangat mahal (expensive)",
-          "mudah pecah (fragile)",
-        ];
-        while (distractors.length < 3) {
-          const fallback = fallbackDistractors[distractors.length];
-          if (!distractors.includes(fallback) && fallback !== item.meaning) {
-            distractors.push(fallback);
-          } else {
-            distractors.push(`arti lain #${distractors.length + 1}`);
-          }
-        }
-
-        const options = [item.meaning, ...distractors].sort(() => 0.5 - Math.random());
-
-        return {
-          ...item,
-          options,
-        };
-      });
-    } catch (e) {
-      console.error("Direct Neon DB getReviewQueue failed, falling back:", e);
-    }
+  if (overdueDays > 0) {
+    score += Math.min(50, overdueDays * 10);
   }
 
-  const store = await getLocalStore();
-  const now = new Date();
-  const endOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+  if (item.status === "learning") score += 30;
+  else if (item.status === "new") score += 25;
+  else if (item.status === "familiar") score += 15;
+  else if (item.status === "strong") score += 10;
+  else if (item.status === "mastered") score += 5;
 
-  // Eligible words: owned by user, matching language, nextReviewAt <= endOfToday OR status is 'new'
-  let candidates = store.vocabulary.filter((v) => {
-    if (v.userId !== userId) return false;
-    if (languageId && v.languageId !== languageId) return false;
-    return v.nextReviewAt <= endOfToday || v.status === "new";
-  });
-
-  // Calculate priority score (higher score = earlier in queue)
-  function calculatePriority(item: VocabularyItem): number {
-    let score = 0;
-    const diffMs = now.getTime() - item.nextReviewAt.getTime();
-    const overdueDays = diffMs / (1000 * 60 * 60 * 24);
-
-    // Overdue boost
-    if (overdueDays > 0) {
-      score += Math.min(50, overdueDays * 10);
-    }
-
-    // Status weighting
-    if (item.status === "learning") score += 30;
-    else if (item.status === "new") score += 25;
-    else if (item.status === "familiar") score += 15;
-    else if (item.status === "strong") score += 10;
-    else if (item.status === "mastered") score += 5;
-
-    // Recent mistake boost
-    if (item.wrongCount > 0) {
-      score += Math.min(30, item.wrongCount * 8);
-    }
-
-    return score;
+  if (item.wrongCount > 0) {
+    score += Math.min(30, item.wrongCount * 8);
   }
 
-  candidates.sort((a, b) => calculatePriority(b) - calculatePriority(a));
-  const queue = candidates.slice(0, limit);
+  return score;
+}
 
-  // Pool of words for generating recognition distractors
-  const langWords = store.vocabulary.filter(
-    (v) => (languageId ? v.languageId === languageId : true) && v.userId === userId
-  );
+function buildReviewQueueWithOptions(
+  queue: VocabularyItem[],
+  wordPool: { id: number; meaning: string }[]
+): ReviewQueueItem[] {
+  const fallbackDistractors = [
+    "cepat dan mudah (fast and simple)",
+    "kurang menyenangkan (unpleasant)",
+    "sangat mahal (expensive)",
+    "mudah pecah (fragile)",
+  ];
 
   return queue.map((item) => {
-    // Generate 3 distractors from user's other vocabulary in the same language
-    const otherWords = langWords.filter((w) => w.id !== item.id && w.meaning !== item.meaning);
-    
-    // Shuffle other words
+    const otherWords = wordPool.filter(
+      (w) => w.id !== item.id && w.meaning !== item.meaning
+    );
     const shuffledOthers = [...otherWords].sort(() => 0.5 - Math.random());
     const distractors = shuffledOthers.slice(0, 3).map((w) => w.meaning);
 
-    // If fewer than 3 other words exist, supply generic fillers
-    const fallbackDistractors = [
-      "cepat dan mudah (fast and simple)",
-      "kurang menyenangkan (unpleasant)",
-      "sangat mahal (expensive)",
-      "mudah pecah (fragile)",
-    ];
     while (distractors.length < 3) {
       const fallback = fallbackDistractors[distractors.length];
       if (!distractors.includes(fallback) && fallback !== item.meaning) {
@@ -185,7 +85,6 @@ export async function getReviewQueue(
       }
     }
 
-    // Combine correct meaning + distractors and shuffle
     const options = [item.meaning, ...distractors].sort(() => 0.5 - Math.random());
 
     return {
@@ -193,6 +92,93 @@ export async function getReviewQueue(
       options,
     };
   });
+}
+
+/**
+ * Returns the prioritized review queue for a user and learning language.
+ */
+export async function getReviewQueue(
+  userId: string,
+  languageId?: number,
+  limit: number = 20
+): Promise<ReviewQueueItem[]> {
+  if (!isTestEnv && isSupabaseConfigured()) {
+    try {
+      const supabase = await createSupabaseServerClient();
+      if (supabase) {
+        const now = new Date();
+        const endOfToday = new Date(
+          now.getFullYear(),
+          now.getMonth(),
+          now.getDate(),
+          23,
+          59,
+          59,
+          999
+        );
+
+        let queueQuery = supabase
+          .from("vocabulary")
+          .select("*")
+          .eq("user_id", userId)
+          .or(`next_review_at.lte.${endOfToday.toISOString()},status.eq.new`);
+
+        let poolQuery = supabase
+          .from("vocabulary")
+          .select("id, meaning")
+          .eq("user_id", userId);
+
+        if (languageId) {
+          queueQuery = queueQuery.eq("language_id", languageId);
+          poolQuery = poolQuery.eq("language_id", languageId);
+        }
+
+        const [queueRes, poolRes] = await Promise.all([queueQuery, poolQuery]);
+
+        if (queueRes.error) throw new Error(queueRes.error.message);
+        if (poolRes.error) throw new Error(poolRes.error.message);
+
+        const candidates = ((queueRes.data || []) as unknown as VocabularyRow[]).map(
+          mapVocabularyRow
+        );
+
+        candidates.sort((a, b) => calculatePriority(b, now) - calculatePriority(a, now));
+        const queue = candidates.slice(0, limit);
+        const wordPool = (poolRes.data || []) as { id: number; meaning: string }[];
+
+        return buildReviewQueueWithOptions(queue, wordPool);
+      }
+    } catch (e) {
+      console.error("Supabase getReviewQueue failed, falling back:", e);
+    }
+  }
+
+  const store = await getLocalStore();
+  const now = new Date();
+  const endOfToday = new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate(),
+    23,
+    59,
+    59,
+    999
+  );
+
+  const candidates = store.vocabulary.filter((v) => {
+    if (v.userId !== userId) return false;
+    if (languageId && v.languageId !== languageId) return false;
+    return v.nextReviewAt <= endOfToday || v.status === "new";
+  });
+
+  candidates.sort((a, b) => calculatePriority(b, now) - calculatePriority(a, now));
+  const queue = candidates.slice(0, limit);
+
+  const langWords = store.vocabulary.filter(
+    (v) => (languageId ? v.languageId === languageId : true) && v.userId === userId
+  );
+
+  return buildReviewQueueWithOptions(queue, langWords);
 }
 
 export interface SubmitReviewInput {
@@ -213,68 +199,76 @@ export async function submitReview(
   userId: string,
   input: SubmitReviewInput
 ): Promise<SubmitReviewResult | null> {
-  if (db && !isTestEnv) {
+  if (!isTestEnv && isSupabaseConfigured()) {
     try {
-      const word = await db.query.vocabulary.findFirst({
-        where: and(eq(schema.vocabulary.id, input.vocabularyId), eq(schema.vocabulary.userId, userId)),
-      });
-      if (!word) return null;
+      const supabase = await createSupabaseServerClient();
+      if (supabase) {
+        const { data: wordRow, error: fetchError } = await supabase
+          .from("vocabulary")
+          .select("*")
+          .eq("id", input.vocabularyId)
+          .eq("user_id", userId)
+          .maybeSingle();
 
-      const now = new Date();
-      const vocabItem: VocabularyItem = {
-        ...word,
-        status: word.status as VocabularyStatus,
-        createdAt: new Date(word.createdAt),
-        updatedAt: new Date(word.updatedAt),
-        nextReviewAt: new Date(word.nextReviewAt),
-        lastReviewedAt: word.lastReviewedAt ? new Date(word.lastReviewedAt) : null,
-      };
+        if (fetchError) throw new Error(fetchError.message);
+        if (!wordRow) return null;
 
-      const update = calculateNextReview(vocabItem, input.difficulty, input.reviewType, now);
+        const now = new Date();
+        const vocabItem = mapVocabularyRow(wordRow as unknown as VocabularyRow);
+        const update = calculateNextReview(
+          vocabItem,
+          input.difficulty,
+          input.reviewType,
+          now
+        );
 
-      await db
-        .update(schema.vocabulary)
-        .set({
-          status: update.status,
-          intervalDays: update.intervalDays,
-          easeFactor: update.easeFactor,
-          nextReviewAt: update.nextReviewAt,
-          reviewCount: update.reviewCount,
-          correctCount: update.correctCount,
-          wrongCount: update.wrongCount,
-          recognitionScore: update.recognitionScore,
-          recallScore: update.recallScore,
-          lastReviewedAt: update.lastReviewedAt,
-          updatedAt: now,
-        })
-        .where(and(eq(schema.vocabulary.id, word.id), eq(schema.vocabulary.userId, userId)));
+        const { error: updateError } = await supabase
+          .from("vocabulary")
+          .update({
+            status: update.status,
+            interval_days: update.intervalDays,
+            ease_factor: update.easeFactor,
+            next_review_at: update.nextReviewAt.toISOString(),
+            review_count: update.reviewCount,
+            correct_count: update.correctCount,
+            wrong_count: update.wrongCount,
+            recognition_score: update.recognitionScore,
+            recall_score: update.recallScore,
+            last_reviewed_at: update.lastReviewedAt.toISOString(),
+            updated_at: now.toISOString(),
+          })
+          .eq("id", vocabItem.id)
+          .eq("user_id", userId);
 
-      const isCorrect = input.difficulty !== "forgot";
-      const [newReview] = await db
-        .insert(schema.vocabularyReviews)
-        .values({
-          vocabularyId: word.id,
-          userId,
-          reviewType: input.reviewType,
-          isCorrect,
-          difficulty: input.difficulty,
-          reviewedAt: now,
-        })
-        .returning();
+        if (updateError) throw new Error(updateError.message);
 
-      const updatedVocab = await getVocabularyByIdForUser(userId, word.id);
+        const isCorrect = input.difficulty !== "forgot";
+        const { data: newReview, error: reviewError } = await supabase
+          .from("vocabulary_reviews")
+          .insert({
+            vocabulary_id: vocabItem.id,
+            user_id: userId,
+            review_type: input.reviewType,
+            is_correct: isCorrect,
+            difficulty: input.difficulty,
+            reviewed_at: now.toISOString(),
+          })
+          .select("*")
+          .single();
 
-      return {
-        vocabulary: updatedVocab!,
-        review: {
-          ...newReview,
-          reviewType: newReview.reviewType as ReviewType,
-          difficulty: newReview.difficulty as ReviewDifficulty,
-          reviewedAt: new Date(newReview.reviewedAt),
-        },
-      };
+        if (reviewError || !newReview) {
+          throw new Error(reviewError?.message || "Failed to insert review");
+        }
+
+        const updatedVocab = await getVocabularyByIdForUser(userId, vocabItem.id);
+
+        return {
+          vocabulary: updatedVocab!,
+          review: mapReviewRow(newReview as VocabularyReviewRow),
+        };
+      }
     } catch (e) {
-      console.error("Direct Neon DB submitReview failed, falling back:", e);
+      console.error("Supabase submitReview failed, falling back:", e);
     }
   }
 
@@ -288,7 +282,6 @@ export async function submitReview(
   const now = new Date();
   const isCorrect = input.difficulty !== "forgot";
 
-  // Calculate updated values with spaced repetition algorithm
   const update = calculateNextReview(word, input.difficulty, input.reviewType, now);
 
   const updatedWord: VocabularyItem = {
@@ -308,7 +301,6 @@ export async function submitReview(
 
   store.vocabulary[wordIndex] = updatedWord;
 
-  // Insert review log
   const reviewId =
     store.vocabularyReviews.length > 0
       ? Math.max(...store.vocabularyReviews.map((r) => r.id)) + 1
@@ -340,134 +332,15 @@ export interface SubmitFlashcardReviewInput {
   actionType: "demote" | "keep" | "promote";
 }
 
-/**
- * Records a flashcard review action with direct status updates,
- * adjusting Recognition/Recall dimensions and scheduling next review.
- */
-export async function submitFlashcardReview(
-  userId: string,
-  input: SubmitFlashcardReviewInput
-): Promise<SubmitReviewResult | null> {
-  if (db && !isTestEnv) {
-    try {
-      const word = await db.query.vocabulary.findFirst({
-        where: and(eq(schema.vocabulary.id, input.vocabularyId), eq(schema.vocabulary.userId, userId)),
-      });
-      if (!word) return null;
-
-      const now = new Date();
-      const reviewType: ReviewType =
-        input.reviewDirection === "target_to_meaning" ? "recognition" : "recall";
-      const isCorrect = input.actionType !== "demote";
-
-      let newRecognition = word.recognitionScore;
-      let newRecall = word.recallScore;
-
-      if (reviewType === "recognition") {
-        if (input.actionType === "promote") {
-          newRecognition = Math.min(100, newRecognition + 25);
-        } else if (input.actionType === "keep") {
-          newRecognition = Math.min(100, newRecognition + 10);
-        } else {
-          newRecognition = Math.max(0, newRecognition - 15);
-        }
-      } else {
-        if (input.actionType === "promote") {
-          newRecall = Math.min(100, newRecall + 25);
-        } else if (input.actionType === "keep") {
-          newRecall = Math.min(100, newRecall + 10);
-        } else {
-          newRecall = Math.max(0, newRecall - 15);
-        }
-      }
-
-      let intervalDays = 1;
-      switch (input.newStatus) {
-        case "new":
-          intervalDays = 1;
-          break;
-        case "learning":
-          intervalDays = 2;
-          break;
-        case "familiar":
-          intervalDays = 4;
-          break;
-        case "strong":
-          intervalDays = 7;
-          break;
-        case "mastered":
-          intervalDays = 14;
-          break;
-      }
-
-      const nextReviewAt = new Date(now.getTime() + intervalDays * 24 * 60 * 60 * 1000);
-
-      await db
-        .update(schema.vocabulary)
-        .set({
-          status: input.newStatus,
-          intervalDays,
-          nextReviewAt,
-          reviewCount: word.reviewCount + 1,
-          correctCount: isCorrect ? word.correctCount + 1 : word.correctCount,
-          wrongCount: !isCorrect ? word.wrongCount + 1 : word.wrongCount,
-          recognitionScore: newRecognition,
-          recallScore: newRecall,
-          lastReviewedAt: now,
-          updatedAt: now,
-        })
-        .where(and(eq(schema.vocabulary.id, word.id), eq(schema.vocabulary.userId, userId)));
-
-      const difficulty: ReviewDifficulty =
-        input.actionType === "promote"
-          ? "easy"
-          : input.actionType === "keep"
-          ? "good"
-          : "forgot";
-
-      const [newReview] = await db
-        .insert(schema.vocabularyReviews)
-        .values({
-          vocabularyId: word.id,
-          userId,
-          reviewType,
-          isCorrect,
-          difficulty,
-          reviewedAt: now,
-        })
-        .returning();
-
-      const updatedVocab = await getVocabularyByIdForUser(userId, word.id);
-
-      return {
-        vocabulary: updatedVocab!,
-        review: {
-          ...newReview,
-          reviewType: newReview.reviewType as ReviewType,
-          difficulty: newReview.difficulty as ReviewDifficulty,
-          reviewedAt: new Date(newReview.reviewedAt),
-        },
-      };
-    } catch (e) {
-      console.error("Direct Neon DB submitFlashcardReview failed, falling back:", e);
-    }
-  }
-
-  const store = await getLocalStore();
-  const wordIndex = store.vocabulary.findIndex(
-    (v) => v.id === input.vocabularyId && v.userId === userId
-  );
-  if (wordIndex === -1) return null;
-
-  const word = store.vocabulary[wordIndex];
-  const now = new Date();
-
-  // Review type mapping: target_to_meaning = recognition, meaning_to_target = recall
+function computeFlashcardReview(
+  word: VocabularyItem,
+  input: SubmitFlashcardReviewInput,
+  now: Date
+) {
   const reviewType: ReviewType =
     input.reviewDirection === "target_to_meaning" ? "recognition" : "recall";
   const isCorrect = input.actionType !== "demote";
 
-  // Dimension scores adjustment
   let newRecognition = word.recognitionScore;
   let newRecall = word.recallScore;
 
@@ -489,7 +362,6 @@ export async function submitFlashcardReview(
     }
   }
 
-  // Interval adjustment based on status
   let intervalDays = 1;
   switch (input.newStatus) {
     case "new":
@@ -510,29 +382,6 @@ export async function submitFlashcardReview(
   }
 
   const nextReviewAt = new Date(now.getTime() + intervalDays * 24 * 60 * 60 * 1000);
-
-  const updatedWord: VocabularyItem = {
-    ...word,
-    status: input.newStatus,
-    intervalDays,
-    nextReviewAt,
-    reviewCount: word.reviewCount + 1,
-    correctCount: isCorrect ? word.correctCount + 1 : word.correctCount,
-    wrongCount: !isCorrect ? word.wrongCount + 1 : word.wrongCount,
-    recognitionScore: newRecognition,
-    recallScore: newRecall,
-    lastReviewedAt: now,
-    updatedAt: now,
-  };
-
-  store.vocabulary[wordIndex] = updatedWord;
-
-  // Insert review log
-  const reviewId =
-    store.vocabularyReviews.length > 0
-      ? Math.max(...store.vocabularyReviews.map((r) => r.id)) + 1
-      : 1;
-
   const difficulty: ReviewDifficulty =
     input.actionType === "promote"
       ? "easy"
@@ -540,13 +389,129 @@ export async function submitFlashcardReview(
       ? "good"
       : "forgot";
 
+  return {
+    reviewType,
+    isCorrect,
+    newRecognition,
+    newRecall,
+    intervalDays,
+    nextReviewAt,
+    difficulty,
+  };
+}
+
+/**
+ * Records a flashcard review action with direct status updates,
+ * adjusting Recognition/Recall dimensions and scheduling next review.
+ */
+export async function submitFlashcardReview(
+  userId: string,
+  input: SubmitFlashcardReviewInput
+): Promise<SubmitReviewResult | null> {
+  if (!isTestEnv && isSupabaseConfigured()) {
+    try {
+      const supabase = await createSupabaseServerClient();
+      if (supabase) {
+        const { data: wordRow, error: fetchError } = await supabase
+          .from("vocabulary")
+          .select("*")
+          .eq("id", input.vocabularyId)
+          .eq("user_id", userId)
+          .maybeSingle();
+
+        if (fetchError) throw new Error(fetchError.message);
+        if (!wordRow) return null;
+
+        const now = new Date();
+        const word = mapVocabularyRow(wordRow as unknown as VocabularyRow);
+        const calc = computeFlashcardReview(word, input, now);
+
+        const { error: updateError } = await supabase
+          .from("vocabulary")
+          .update({
+            status: input.newStatus,
+            interval_days: calc.intervalDays,
+            next_review_at: calc.nextReviewAt.toISOString(),
+            review_count: word.reviewCount + 1,
+            correct_count: calc.isCorrect ? word.correctCount + 1 : word.correctCount,
+            wrong_count: !calc.isCorrect ? word.wrongCount + 1 : word.wrongCount,
+            recognition_score: calc.newRecognition,
+            recall_score: calc.newRecall,
+            last_reviewed_at: now.toISOString(),
+            updated_at: now.toISOString(),
+          })
+          .eq("id", word.id)
+          .eq("user_id", userId);
+
+        if (updateError) throw new Error(updateError.message);
+
+        const { data: newReview, error: reviewError } = await supabase
+          .from("vocabulary_reviews")
+          .insert({
+            vocabulary_id: word.id,
+            user_id: userId,
+            review_type: calc.reviewType,
+            is_correct: calc.isCorrect,
+            difficulty: calc.difficulty,
+            reviewed_at: now.toISOString(),
+          })
+          .select("*")
+          .single();
+
+        if (reviewError || !newReview) {
+          throw new Error(reviewError?.message || "Failed to insert flashcard review");
+        }
+
+        const updatedVocab = await getVocabularyByIdForUser(userId, word.id);
+
+        return {
+          vocabulary: updatedVocab!,
+          review: mapReviewRow(newReview as VocabularyReviewRow),
+        };
+      }
+    } catch (e) {
+      console.error("Supabase submitFlashcardReview failed, falling back:", e);
+    }
+  }
+
+  const store = await getLocalStore();
+  const wordIndex = store.vocabulary.findIndex(
+    (v) => v.id === input.vocabularyId && v.userId === userId
+  );
+  if (wordIndex === -1) return null;
+
+  const word = store.vocabulary[wordIndex];
+  const now = new Date();
+  const calc = computeFlashcardReview(word, input, now);
+
+  const updatedWord: VocabularyItem = {
+    ...word,
+    status: input.newStatus,
+    intervalDays: calc.intervalDays,
+    nextReviewAt: calc.nextReviewAt,
+    reviewCount: word.reviewCount + 1,
+    correctCount: calc.isCorrect ? word.correctCount + 1 : word.correctCount,
+    wrongCount: !calc.isCorrect ? word.wrongCount + 1 : word.wrongCount,
+    recognitionScore: calc.newRecognition,
+    recallScore: calc.newRecall,
+    lastReviewedAt: now,
+    updatedAt: now,
+  };
+
+  store.vocabulary[wordIndex] = updatedWord;
+
+  const reviewId =
+    store.vocabularyReviews.length > 0
+      ? Math.max(...store.vocabularyReviews.map((r) => r.id)) + 1
+      : 1;
+
   const newReview: VocabularyReview = {
     id: reviewId,
     vocabularyId: word.id,
     userId,
-    reviewType,
-    isCorrect,
-    difficulty,
+    reviewType: calc.reviewType,
+    isCorrect: calc.isCorrect,
+    difficulty: calc.difficulty,
     reviewedAt: now,
   };
 
@@ -567,44 +532,29 @@ export async function getForgottenWords(
   languageId?: number,
   limit: number = 10
 ): Promise<VocabularyItem[]> {
-  if (db && !isTestEnv) {
+  if (!isTestEnv && isSupabaseConfigured()) {
     try {
-      const conditions = [
-        eq(schema.vocabulary.userId, userId),
-        gte(schema.vocabulary.wrongCount, 3),
-      ];
-      if (languageId) {
-        conditions.push(eq(schema.vocabulary.languageId, languageId));
-      }
-      const rows = await db.query.vocabulary.findMany({
-        where: and(...conditions),
-        orderBy: desc(schema.vocabulary.wrongCount),
-        limit,
-        with: {
-          language: true,
-        },
-      });
+      const supabase = await createSupabaseServerClient();
+      if (supabase) {
+        let query = supabase
+          .from("vocabulary")
+          .select("*, language:languages(*)")
+          .eq("user_id", userId)
+          .gte("wrong_count", 3)
+          .order("wrong_count", { ascending: false })
+          .limit(limit);
 
-      return rows.map((r) => ({
-        ...r,
-        status: r.status as VocabularyStatus,
-        createdAt: new Date(r.createdAt),
-        updatedAt: new Date(r.updatedAt),
-        nextReviewAt: new Date(r.nextReviewAt),
-        lastReviewedAt: r.lastReviewedAt ? new Date(r.lastReviewedAt) : null,
-        language: r.language
-          ? {
-              id: r.language.id,
-              code: r.language.code,
-              name: r.language.name,
-              nativeName: r.language.nativeName,
-              flag: r.language.flag,
-              createdAt: new Date(r.language.createdAt),
-            }
-          : undefined,
-      }));
+        if (languageId) {
+          query = query.eq("language_id", languageId);
+        }
+
+        const { data, error } = await query;
+        if (error) throw new Error(error.message);
+
+        return ((data || []) as unknown as VocabularyRow[]).map(mapVocabularyRow);
+      }
     } catch (e) {
-      console.error("Direct Neon DB getForgottenWords failed, falling back:", e);
+      console.error("Supabase getForgottenWords failed, falling back:", e);
     }
   }
 
@@ -630,27 +580,22 @@ export async function getReviewHistory(
   userId: string,
   vocabularyId: number
 ): Promise<VocabularyReview[]> {
-  if (db && !isTestEnv) {
+  if (!isTestEnv && isSupabaseConfigured()) {
     try {
-      const rows = await db
-        .select()
-        .from(schema.vocabularyReviews)
-        .where(
-          and(
-            eq(schema.vocabularyReviews.vocabularyId, vocabularyId),
-            eq(schema.vocabularyReviews.userId, userId)
-          )
-        )
-        .orderBy(desc(schema.vocabularyReviews.reviewedAt));
+      const supabase = await createSupabaseServerClient();
+      if (supabase) {
+        const { data, error } = await supabase
+          .from("vocabulary_reviews")
+          .select("*")
+          .eq("vocabulary_id", vocabularyId)
+          .eq("user_id", userId)
+          .order("reviewed_at", { ascending: false });
 
-      return rows.map((r) => ({
-        ...r,
-        reviewType: r.reviewType as ReviewType,
-        difficulty: r.difficulty as ReviewDifficulty,
-        reviewedAt: new Date(r.reviewedAt),
-      }));
+        if (error) throw new Error(error.message);
+        return ((data || []) as VocabularyReviewRow[]).map(mapReviewRow);
+      }
     } catch (e) {
-      console.error("Direct Neon DB getReviewHistory failed, falling back:", e);
+      console.error("Supabase getReviewHistory failed, falling back:", e);
     }
   }
 
